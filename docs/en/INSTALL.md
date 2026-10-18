@@ -78,6 +78,8 @@ python acestep/api_server.py                     # REST API
 
 > Models are downloaded automatically on first run. Open http://localhost:7860 (Gradio) or http://localhost:8001 (API).
 
+For the docker-server RTX PRO Blackwell Compose profiles, see [Docker production profiles](DOCKER_PRODUCTION_PROFILES.md).
+
 ---
 
 ## 🚀 Launch Scripts
