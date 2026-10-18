@@ -12,6 +12,9 @@ import torch
 from .dit_residency import service_phase
 
 
+from .memory_telemetry import measured as profiled
+
+
 class ServiceGenerateMixin:
     """Run the high-level service-generation pipeline over prepared helper APIs.
 
@@ -21,6 +24,7 @@ class ServiceGenerateMixin:
 
     @service_phase
     @torch.inference_mode()
+    @profiled("service_worker")
     def service_generate(
         self,
         captions: Union[str, List[str]],

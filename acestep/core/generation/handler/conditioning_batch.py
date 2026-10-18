@@ -9,6 +9,9 @@ from acestep.constants import DEFAULT_DIT_INSTRUCTION
 from .residency_request import enabled
 
 
+from .memory_telemetry import measured as profiled
+
+
 class ConditioningBatchMixin:
     """Mixin containing batch preparation orchestration.
 
@@ -20,6 +23,7 @@ class ConditioningBatchMixin:
       ``_prepare_text_conditioning_inputs``.
     """
 
+    @profiled("batch_prepare")
     def _prepare_batch(
         self,
         captions: List[str],

@@ -9,6 +9,9 @@ from loguru import logger
 from .residency_request import enabled
 
 
+from .memory_telemetry import measured as profiled
+
+
 class ConditioningTargetMixin:
     """Mixin containing target-audio to latent preparation helpers.
 
@@ -35,6 +38,7 @@ class ConditioningTargetMixin:
         tiled = self.silence_latent[0].repeat(repeats, 1)  # (repeats*available, C)
         return tiled[:length, :]
 
+    @profiled("target_prepare")
     def _prepare_target_latents_and_wavs(
         self,
         batch_size: int,

@@ -34,6 +34,12 @@ def trace(host, event: str, **fields) -> None:
 @contextmanager
 def measured_phase(host, phase):
     """Measure each explicit GPU phase; tracing is opt-in and synchronizes endpoints."""
+    from .memory_telemetry import current, mode
+    profile = current() if mode() != "off" else None
+    if profile is not None:
+        with profile.phase(phase):
+            yield
+        return
     active = (os.getenv("ACESTEP_RESIDENCY_TRACE") == "1"
               and str(getattr(host, "device", "")).startswith("cuda"))
     if not active:

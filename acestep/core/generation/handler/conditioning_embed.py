@@ -8,6 +8,9 @@ from loguru import logger
 from .residency_telemetry import measured
 
 
+from .memory_telemetry import measured as profiled
+
+
 class ConditioningEmbedMixin:
     """Mixin containing reference/text embedding preprocessing steps.
 
@@ -99,6 +102,7 @@ class ConditioningEmbedMixin:
                 non_cover_hidden_states = self.infer_text_embeddings(non_cover_ids)
         return text_hidden_states, lyric_hidden_states, non_cover_hidden_states
 
+    @profiled("batch_preprocess")
     def preprocess_batch(self, batch) -> Tuple:
         """Preprocess an already prepared batch for DiT model input."""
         target_latents = batch["target_latents"]

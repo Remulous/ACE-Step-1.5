@@ -7,6 +7,7 @@ import torch
 from loguru import logger
 
 from .residency_telemetry import measured
+from .memory_probes import call as profile_call
 
 
 class ServiceGenerateExecuteMixin:
@@ -176,7 +177,7 @@ class ServiceGenerateExecuteMixin:
         logger.info(f"[service_generate] Generating audio... (DiT backend: {dit_backend})")
         with torch.inference_mode():
             with self._load_model_context("model"):
-                encoder_hidden_states, encoder_attention_mask, context_latents = self.model.prepare_condition(
+                encoder_hidden_states, encoder_attention_mask, context_latents = profile_call(self, "dit_prepare_condition", self.model.prepare_condition,
                     text_hidden_states=payload["text_hidden_states"],
                     text_attention_mask=payload["text_attention_mask"],
                     lyric_hidden_states=payload["lyric_hidden_states"],
@@ -214,7 +215,7 @@ class ServiceGenerateExecuteMixin:
                             sil_exp = self.silence_latent[:, :payload["src_latents"].shape[1], :].expand(
                                 payload["src_latents"].shape[0], -1, -1
                             )
-                            enc_hs_nc, enc_am_nc, ctx_nc = self.model.prepare_condition(
+                            enc_hs_nc, enc_am_nc, ctx_nc = profile_call(self, "dit_prepare_condition", self.model.prepare_condition,
                                 text_hidden_states=payload["non_cover_text_hidden_states"],
                                 text_attention_mask=payload["non_cover_text_attention_masks"],
                                 lyric_hidden_states=payload["lyric_hidden_states"],

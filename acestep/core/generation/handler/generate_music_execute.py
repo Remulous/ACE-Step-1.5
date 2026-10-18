@@ -14,9 +14,13 @@ from .residency_request import worker_target
 _DEFAULT_GENERATION_TIMEOUT = int(os.environ.get("ACESTEP_GENERATION_TIMEOUT", "600"))
 
 
+from .memory_telemetry import measured as profiled
+
+
 class GenerateMusicExecuteMixin:
     """Run service generation under diffusion progress estimation lifecycle."""
 
+    @profiled("worker_wait")
     def _run_generate_music_service_with_progress(
         self,
         progress: Any,

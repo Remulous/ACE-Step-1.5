@@ -47,6 +47,9 @@ def _warn_if_prerelease_python():
         )
 
 
+from acestep.core.generation.handler.memory_telemetry import initialize_lm
+
+
 class LLMHandler:
     """5Hz LM Handler for audio code generation"""
 
@@ -498,6 +501,7 @@ class LLMHandler:
         else:
             return [formatted_prompts], is_batch
 
+    @initialize_lm
     def initialize(
         self,
         checkpoint_dir: str,

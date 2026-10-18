@@ -11,6 +11,7 @@ from .residency_telemetry import trace
 
 _CURRENT = contextvars.ContextVar("acestep_residency_request", default=None)
 _INIT_LOCK = threading.Lock()
+_PROFILE_GATE = threading.Lock()
 
 
 def enabled(host) -> bool:
@@ -40,6 +41,8 @@ class Request:
         self.id = uuid.uuid4().hex[:12]
         self.lock = threading.Lock()
         self.users = 1
+        self.profile = None
+        self.profile_gate = False
 
     def retain(self):
         """Register a worker before starting its thread."""
@@ -51,8 +54,14 @@ class Request:
         with self.lock:
             self.users -= 1
             if self.users == 0:
-                trace(self.host, "request_end", request=self.id)
-                gate(self.host).release()
+                try:
+                    if self.profile is not None:
+                        self.profile.finish()
+                    trace(self.host, "request_end", request=self.id)
+                finally:
+                    gate(self.host).release()
+                    if self.profile_gate:
+                        _PROFILE_GATE.release()
 
 
 @contextmanager
@@ -62,11 +71,26 @@ def request_scope(host):
     if current is not None and current.host is host:
         yield current
         return
-    gate(host).acquire()
+    from .memory_telemetry import enabled as profile_enabled
+    profiling = profile_enabled(host)
+    if profiling:
+        if current is not None:
+            raise RuntimeError("Nested profiling across different handlers is unsupported")
+        _PROFILE_GATE.acquire()
+    try:
+        gate(host).acquire()
+    except BaseException:
+        if profiling:
+            _PROFILE_GATE.release()
+        raise
     request = Request(host)
+    request.profile_gate = profiling
     token = _CURRENT.set(request)
     trace(host, "request_start", request=request.id)
     try:
+        from .memory_telemetry import Profile
+        if profile_enabled(host):
+            request.profile = Profile(host, request.id)
         yield request
     finally:
         _CURRENT.reset(token)
@@ -77,7 +101,9 @@ def guarded(function):
     """Guard handler entrypoints only when the experimental policy is enabled."""
     @functools.wraps(function)
     def wrapped(host, *args, **kwargs):
-        if not enabled(host) and os.getenv("ACESTEP_RESIDENCY_TRACE") != "1":
+        from .memory_telemetry import enabled as profile_enabled
+        if (not enabled(host) and os.getenv("ACESTEP_RESIDENCY_TRACE") != "1"
+                and not profile_enabled(host)):
             return function(host, *args, **kwargs)
         with request_scope(host):
             return function(host, *args, **kwargs)

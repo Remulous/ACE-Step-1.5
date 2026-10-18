@@ -13,6 +13,9 @@ from .residency_telemetry import measured
 from acestep.gpu_config import get_effective_free_vram_gb
 
 
+from .memory_telemetry import measured as profiled
+
+
 class GenerateMusicDecodeMixin:
     """Validate generated latents and decode them into waveform tensors."""
 
@@ -107,6 +110,7 @@ class GenerateMusicDecodeMixin:
         return pred_latents, time_costs
 
     @measured("vae_decode")
+    @profiled("output_decode")
     def _decode_generate_music_pred_latents(
         self,
         pred_latents: torch.Tensor,

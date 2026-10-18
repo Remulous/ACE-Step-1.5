@@ -6,9 +6,13 @@ from acestep.gpu_config import get_global_gpu_config
 from loguru import logger
 
 
+from .memory_telemetry import measured as profiled
+
+
 class GenerateMusicPayloadMixin:
     """Build audio/metadata payload structures returned by ``generate_music``."""
 
+    @profiled("postprocess")
     def _build_generate_music_success_payload(
         self,
         outputs: Dict[str, Any],
