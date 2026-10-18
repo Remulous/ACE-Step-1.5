@@ -57,6 +57,7 @@ def lm_inventory():
         "max_model_len": runner.config.max_model_len,
         "enforce_eager": runner.enforce_eager,
         "peak_used_blocks_since_init": getattr(engine.scheduler, "_profile_peak_used_blocks", None),
+        "generate_cache_profiles": getattr(engine, "_cache_profile_history", None),
         "used_blocks": len(block_mgr.used_block_ids) if block_mgr else None,
         "free_blocks": len(block_mgr.free_block_ids) if block_mgr else None,
         "runner_direct_tensors": storage_bytes(vars(runner).values()),
@@ -89,3 +90,10 @@ def track_cache_occupancy(host):
         scheduler._profile_peak_used_blocks = max(scheduler._profile_peak_used_blocks, used)
         return result
     scheduler.schedule = schedule
+
+
+def reset_cache_profile_history(host):
+    """Start a new request-local list of nano-vLLM generation observations."""
+    engine = getattr(host, "llm", None)
+    if engine is not None and hasattr(engine, "_cache_profile_history"):
+        engine._cache_profile_history = []

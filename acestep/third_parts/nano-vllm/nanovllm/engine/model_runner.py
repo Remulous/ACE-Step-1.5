@@ -7,6 +7,7 @@ from multiprocessing.shared_memory import SharedMemory
 import sys
 
 from nanovllm.config import Config
+from nanovllm.config import select_kv_cache_blocks
 from acestep.debug_utils import debug_start, debug_end
 from nanovllm import distributed as dist_utils
 
@@ -357,7 +358,16 @@ class ModelRunner:
         if available_for_kv_cache <= 0:
             available_for_kv_cache = free * 0.5  # Fallback to 50% of free memory
         
-        config.num_kvcache_blocks = max(1, int(available_for_kv_cache) // block_bytes)
+        available_blocks = int(available_for_kv_cache) // block_bytes
+        try:
+            config.num_kvcache_blocks = select_kv_cache_blocks(
+                available_blocks, config.max_kvcache_blocks
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"{exc}. Free: {free / 1024**3:.2f} GB, "
+                f"available for KV: {available_for_kv_cache / 1024**3:.2f} GB"
+            ) from exc
         if config.num_kvcache_blocks <= 0:
             raise RuntimeError(
                 f"Insufficient GPU memory for KV cache. "

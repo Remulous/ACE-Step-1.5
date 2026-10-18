@@ -11,7 +11,12 @@ from contextlib import contextmanager
 import torch
 from loguru import logger
 
-from .memory_inventory import inventory, register_lm, track_cache_occupancy
+from .memory_inventory import (
+    inventory,
+    register_lm,
+    reset_cache_profile_history,
+    track_cache_occupancy,
+)
 
 _WRITE_LOCK = threading.Lock()
 
@@ -74,6 +79,7 @@ class Profile:
         self.handles = install_forward_probes(host, self)
         self.start = time.perf_counter()
         self.peaks = [0, 0]
+        reset_cache_profile_history(host)
         emit("request_start", request=request, **sample(host.device), models=inventory(host))
 
     def boundary(self):

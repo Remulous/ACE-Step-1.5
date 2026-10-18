@@ -829,6 +829,25 @@ class LLMHandler:
 
             logger.info(f"Initializing 5Hz LM with model: {model_path}, enforce_eager: {enforce_eager}, tensor_parallel_size: 1, max_model_len: {self.max_model_len}, gpu_memory_utilization: {gpu_memory_utilization:.3f}")
 
+            max_kv_blocks = os.environ.get("ACESTEP_NANOVLLM_MAX_KV_BLOCKS")
+            engine_options = {}
+            if max_kv_blocks:
+                try:
+                    max_kv_blocks = int(max_kv_blocks)
+                except ValueError as exc:
+                    raise ValueError(
+                        "ACESTEP_NANOVLLM_MAX_KV_BLOCKS must be a positive integer"
+                    ) from exc
+                if max_kv_blocks <= 0:
+                    raise ValueError(
+                        "ACESTEP_NANOVLLM_MAX_KV_BLOCKS must be a positive integer"
+                    )
+                engine_options["max_kvcache_blocks"] = max_kv_blocks
+                logger.warning(
+                    "Applying experimental nano-vLLM KV block cap: {}",
+                    max_kv_blocks,
+                )
+
             # When Triton is unavailable, torch._dynamo still attempts to
             # compile functions decorated with @torch.compile and emits
             # verbose "WON'T CONVERT" warnings with full tracebacks.
@@ -856,6 +875,7 @@ class LLMHandler:
                     max_model_len=self.max_model_len,
                     gpu_memory_utilization=gpu_memory_utilization,
                     tokenizer=self.llm_tokenizer,
+                    **engine_options,
                 )
                 logger.info(f"5Hz LM initialized successfully in {time.time() - start_time:.2f} seconds")
                 self.llm_initialized = True

@@ -1,4 +1,5 @@
 import atexit
+import os
 import threading
 from dataclasses import fields
 from time import perf_counter
@@ -31,6 +32,9 @@ class LLMEngine:
         # assertion failures (illegal memory access in KV cache).
         self._generate_lock = threading.Lock()
         self._closed = False
+        self._active_cache_profile = None
+        self._last_cache_profile = None
+        self._cache_profile_history = []
         ctx = mp.get_context("spawn")
         for i in range(1, config.tensor_parallel_size):
             event = ctx.Event()
@@ -98,6 +102,8 @@ class LLMEngine:
     def add_request(self, prompt: str | list[int], sampling_params: SamplingParams, unconditional_prompt: str | list[int] | None = None):
         if isinstance(prompt, str):
             prompt = self.tokenizer.encode(prompt)
+        if self._active_cache_profile is not None:
+            self._active_cache_profile["prompt_token_lengths"].append(len(prompt))
         # For CFG: if cfg_scale > 1.0, create both conditional and unconditional sequences
         if sampling_params.cfg_scale > 1.0:
             if unconditional_prompt is None:
@@ -111,20 +117,33 @@ class LLMEngine:
                     unconditional_prompt = prompt
             if isinstance(unconditional_prompt, str):
                 unconditional_prompt = self.tokenizer.encode(unconditional_prompt)
+            if self._active_cache_profile is not None:
+                self._active_cache_profile["prompt_token_lengths"].append(
+                    len(unconditional_prompt)
+                )
             # Create unconditional sequence first (so we can reference it from conditional)
             uncond_seq = Sequence(unconditional_prompt, sampling_params, is_unconditional=True)
             # Create conditional sequence with reference to unconditional
             cond_seq = Sequence(prompt, sampling_params, is_unconditional=False, conditional_seq=uncond_seq)
+            if self._active_cache_profile is not None:
+                lengths = self._active_cache_profile["sequence_prompt_token_lengths"]
+                lengths[str(uncond_seq.seq_id)] = len(unconditional_prompt)
+                lengths[str(cond_seq.seq_id)] = len(prompt)
             uncond_seq.paired_seq = cond_seq  # Link them bidirectionally
             # Add both sequences to scheduler
             self.scheduler.add(cond_seq)
             self.scheduler.add(uncond_seq)
         else:
             seq = Sequence(prompt, sampling_params)
+            if self._active_cache_profile is not None:
+                self._active_cache_profile["sequence_prompt_token_lengths"][
+                    str(seq.seq_id)
+                ] = len(prompt)
             self.scheduler.add(seq)
 
     def step(self):
         seqs, is_prefill = self.scheduler.schedule()
+        self._record_cache_profile(seqs)
         token_ids = self.model_runner.call("run", seqs, is_prefill)
         self.scheduler.postprocess(seqs, token_ids)
         # Only output conditional sequences (unconditional sequences are just for CFG computation)
@@ -132,6 +151,18 @@ class LLMEngine:
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in output_seqs]
         num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -len([s for s in seqs if not s.is_unconditional])
         return outputs, num_tokens
+
+    def _record_cache_profile(self, seqs):
+        """Track scheduled token lengths and physical block use when profiling is on."""
+        if self._active_cache_profile is not None:
+            profile = self._active_cache_profile
+            used = len(self.scheduler.block_manager.used_block_ids)
+            profile["peak_used_blocks"] = max(profile["peak_used_blocks"], used)
+            for seq in seqs:
+                key = str(seq.seq_id)
+                profile["sequence_peak_token_lengths"][key] = max(
+                    profile["sequence_peak_token_lengths"].get(key, 0), len(seq)
+                )
 
     def is_finished(self):
         return self.scheduler.is_finished()
@@ -171,7 +202,39 @@ class LLMEngine:
         with self._generate_lock:
             if self._closed:
                 raise RuntimeError("nano-vLLM engine is closed; construct a new engine")
-            return self._generate_impl(prompts, sampling_params, use_tqdm, unconditional_prompts)
+            enabled = os.getenv("ACESTEP_MEMORY_PROFILE", "off") in (
+                "timing", "attribution"
+            )
+            profile = None
+            if enabled:
+                profile = {
+                    "prompt_token_lengths": [],
+                    "sequence_prompt_token_lengths": {},
+                    "sequence_peak_token_lengths": {},
+                    "completion_token_lengths": [],
+                    "completion_token_lengths_by_sequence": {},
+                    "sequence_token_lengths_at_completion": {},
+                    "peak_used_blocks": 0,
+                    "error": None,
+                }
+                self._active_cache_profile = profile
+            try:
+                return self._generate_impl(
+                    prompts, sampling_params, use_tqdm, unconditional_prompts
+                )
+            except BaseException as exc:
+                if profile is not None:
+                    profile["error"] = type(exc).__name__
+                raise
+            finally:
+                if profile is not None:
+                    manager = self.scheduler.block_manager
+                    profile["used_blocks_at_end"] = len(manager.used_block_ids)
+                    profile["free_blocks_at_end"] = len(manager.free_block_ids)
+                    profile["total_blocks"] = len(manager.blocks)
+                    self._last_cache_profile = profile
+                    self._cache_profile_history.append(profile)
+                    self._active_cache_profile = None
 
     def _generate_impl(
         self,
@@ -220,6 +283,20 @@ class LLMEngine:
             if use_tqdm:
                 pbar.close()
         
+        if self._active_cache_profile is not None:
+            profile = self._active_cache_profile
+            profile["completion_token_lengths_by_sequence"] = {
+                str(seq_id): len(token_ids) for seq_id, token_ids in outputs.items()
+            }
+            profile["sequence_token_lengths_at_completion"] = {
+                key: prompt_length
+                + profile["completion_token_lengths_by_sequence"].get(key, 0)
+                for key, prompt_length in profile["sequence_prompt_token_lengths"].items()
+            }
         outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
+        if self._active_cache_profile is not None:
+            self._active_cache_profile["completion_token_lengths"] = [
+                len(token_ids) for token_ids in outputs
+            ]
         outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]
         return outputs
