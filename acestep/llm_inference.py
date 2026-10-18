@@ -15,6 +15,8 @@ from contextlib import contextmanager
 import yaml
 import torch
 from loguru import logger
+
+from acestep.core.generation.handler.residency_telemetry import measured
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.generation.streamers import BaseStreamer
@@ -1279,6 +1281,7 @@ class LLMHandler:
 
         return f"<think>\n{cot_yaml}\n</think>"
 
+    @measured("lm")
     def generate_with_stop_condition(
         self,
         caption: str,

@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional, Union
 import torch
 from loguru import logger
 
+from .residency_request import guarded
+
 from acestep.constants import DEFAULT_DIT_INSTRUCTION
 from acestep.core.generation.handler.repaint_waveform_splice import (
     apply_repaint_waveform_splice,
@@ -192,6 +194,7 @@ class GenerateMusicMixin:
             return bool(dcw_enabled)
         return bool(self.is_turbo_model())
 
+    @guarded
     def generate_music(
         self,
         captions: str,

@@ -6,6 +6,8 @@ import torch
 
 from acestep.constants import DEFAULT_DIT_INSTRUCTION
 
+from .residency_request import enabled
+
 
 class ConditioningBatchMixin:
     """Mixin containing batch preparation orchestration.
@@ -75,37 +77,18 @@ class ConditioningBatchMixin:
             elif isinstance(refer_audio_list, torch.Tensor):
                 refer_audios[ii] = refer_audios[ii].to(self.device)
 
+        precomputed_reference = None
+        if enabled(self):
+            with self._load_model_context("vae"):
+                precomputed_reference = self.infer_refer_latent(refer_audios)
+
         if vocal_languages is None:
             vocal_languages = self._create_fallback_vocal_languages(batch_size)
         parsed_metas = self._parse_metas(metas)
 
-        target_wavs, target_latents, latent_masks, max_latent_length, silence_latent_tiled = (
-            self._prepare_target_latents_and_wavs(
-                batch_size,
-                target_wavs,
-                audio_code_hints,
-                source_repaint_latents=source_repaint_latents,
-            )
-        )
-        wav_lengths = torch.tensor([target_wavs.shape[-1]] * batch_size, dtype=torch.long)
-
+        # Tokenization is independent of target latents. In phase mode, run the
+        # text encoder now so its weights/activations never overlap the DiT.
         instructions = self._normalize_instructions(instructions, batch_size, DEFAULT_DIT_INSTRUCTION)
-        chunk_masks, spans, is_covers, src_latents, repaint_mask = self._build_chunk_masks_and_src_latents(
-            batch_size,
-            max_latent_length,
-            instructions,
-            audio_code_hints,
-            target_wavs,
-            target_latents,
-            repainting_start,
-            repainting_end,
-            silence_latent_tiled,
-            chunk_mask_modes=chunk_mask_modes,
-            task_type=task_type,
-        )
-        precomputed_lm_hints_25hz = self._prepare_precomputed_lm_hints(
-            batch_size, audio_code_hints, max_latent_length, silence_latent_tiled
-        )
         (
             text_inputs,
             padded_text_token_idss,
@@ -125,6 +108,39 @@ class ConditioningBatchMixin:
             global_captions=global_captions,
             chunk_mask_modes=chunk_mask_modes,
         )
+        precomputed_embeddings = None
+        if enabled(self):
+            precomputed_embeddings = self._infer_prompt_embeddings(
+                padded_text_token_idss, padded_lyric_token_idss, padded_non_cover_text_input_ids
+            )
+
+        target_wavs, target_latents, latent_masks, max_latent_length, silence_latent_tiled = (
+            self._prepare_target_latents_and_wavs(
+                batch_size,
+                target_wavs,
+                audio_code_hints,
+                source_repaint_latents=source_repaint_latents,
+            )
+        )
+        wav_lengths = torch.tensor([target_wavs.shape[-1]] * batch_size, dtype=torch.long)
+
+        chunk_masks, spans, is_covers, src_latents, repaint_mask = self._build_chunk_masks_and_src_latents(
+            batch_size,
+            max_latent_length,
+            instructions,
+            audio_code_hints,
+            target_wavs,
+            target_latents,
+            repainting_start,
+            repainting_end,
+            silence_latent_tiled,
+            chunk_mask_modes=chunk_mask_modes,
+            task_type=task_type,
+        )
+        precomputed_lm_hints_25hz = self._prepare_precomputed_lm_hints(
+            batch_size, audio_code_hints, max_latent_length, silence_latent_tiled
+        )
+
 
         batch = {
             "keys": keys,
@@ -151,6 +167,9 @@ class ConditioningBatchMixin:
             "non_cover_text_attention_masks": padded_non_cover_text_attention_masks,
             "repaint_mask": repaint_mask,
         }
+        if precomputed_reference is not None:
+            batch["precomputed_reference"] = precomputed_reference
+            batch["precomputed_embeddings"] = precomputed_embeddings
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
                 batch[k] = v.to(self.device)

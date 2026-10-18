@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 from loguru import logger
 
+from .residency_telemetry import measured
+
 
 class ServiceGenerateExecuteMixin:
     """Run diffusion execution for normalized service-generation requests."""
@@ -143,6 +145,7 @@ class ServiceGenerateExecuteMixin:
             kwargs["timesteps"] = torch.tensor(timesteps, dtype=torch.float32, device=self.device)
         return kwargs
 
+    @measured("diffusion")
     def _execute_service_generate_diffusion(
         self,
         payload: Dict[str, Any],

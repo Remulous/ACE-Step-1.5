@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import torch
 
+from .dit_residency import service_phase
+
 
 class ServiceGenerateMixin:
     """Run the high-level service-generation pipeline over prepared helper APIs.
@@ -17,6 +19,7 @@ class ServiceGenerateMixin:
     preparation, diffusion, and output-attachment helper methods.
     """
 
+    @service_phase
     @torch.inference_mode()
     def service_generate(
         self,
