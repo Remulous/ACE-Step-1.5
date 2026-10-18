@@ -119,6 +119,7 @@ class ModelRunner:
         self.world_size = config.tensor_parallel_size
         self.rank = rank
         self.event = event
+        self._closed = False
         
         # Only initialize distributed if world_size > 1
         if self.world_size > 1:
@@ -232,16 +233,45 @@ class ModelRunner:
         self._seq_token_ids_buffer = torch.zeros(max_bs, self.config.max_model_len, dtype=torch.int64, device="cpu", pin_memory=True)
         debug_end("_allocate_sample_buffers", _t0, prefix="tensor.vllm")
 
+    def close(self):
+        """Synchronize and release all CUDA-owned runner state.
+
+        The caller must have stopped new requests before closing. CUDA graph
+        handles and layer cache views are released before their backing tensors.
+        """
+        if self._closed:
+            return
+        torch.cuda.synchronize()
+        if not self.enforce_eager:
+            self.graphs.clear()
+            self.graphs = None
+            self.graph_vars = None
+            self.graph_pool = None
+        reset_context()
+        if self.model is not None:
+            for module in self.model.modules():
+                if hasattr(module, "k_cache"):
+                    module.k_cache = None
+                if hasattr(module, "v_cache"):
+                    module.v_cache = None
+        self.kv_cache = None
+        self.model = None
+        self.sampler = None
+        for name in tuple(vars(self)):
+            if name.startswith("_cpu_") or name == "_seq_token_ids_buffer":
+                setattr(self, name, None)
+        torch.cuda.synchronize()
+        dist_utils.destroy_process_group()
+        self._closed = True
+
     def exit(self):
+        """Close runner resources and release its shared-memory handle."""
         if self.world_size > 1:
             self.shm.close()
             dist_utils.barrier()
             if self.rank == 0:
                 self.shm.unlink()
-        if not self.enforce_eager:
-            del self.graphs, self.graph_pool
-        torch.cuda.synchronize()
-        dist_utils.destroy_process_group()
+        self.close()
 
     def loop(self):
         while True:

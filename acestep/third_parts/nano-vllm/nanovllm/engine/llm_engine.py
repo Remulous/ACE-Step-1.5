@@ -30,6 +30,7 @@ class LLMEngine:
         # and CUDA graph input buffers, leading to intermittent CUDA device-side
         # assertion failures (illegal memory access in KV cache).
         self._generate_lock = threading.Lock()
+        self._closed = False
         ctx = mp.get_context("spawn")
         for i in range(1, config.tensor_parallel_size):
             event = ctx.Event()
@@ -45,13 +46,54 @@ class LLMEngine:
             self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
         config.eos = self.tokenizer.eos_token_id
         self.scheduler = Scheduler(config)
-        atexit.register(self.exit)
+        self._atexit_callback = self.exit
+        atexit.register(self._atexit_callback)
 
     def exit(self):
-        self.model_runner.call("exit")
-        del self.model_runner
-        for p in self.ps:
-            p.join()
+        """Close at process exit, preserving legacy cleanup for tensor parallelism."""
+        if self.ps:
+            # Preserve the existing shutdown path for tensor-parallel workers.
+            self.model_runner.call("exit")
+            del self.model_runner
+            for process in self.ps:
+                process.join()
+            return
+        self.close()
+
+    def close(self):
+        """Drain generation and release runner, cache, graph and engine state.
+
+        Acquiring the generation lock ensures teardown cannot race a request.
+        A closed engine is terminal; construct a new ``LLM`` to resume inference.
+        """
+        with self._generate_lock:
+            if self._closed:
+                return
+            if self.ps:
+                raise RuntimeError(
+                    "reusable nano-vLLM close currently requires tensor_parallel_size=1"
+                )
+            self.reset()
+            import torch
+            torch.cuda.synchronize()
+            self.model_runner.call("exit")
+            del self.model_runner
+            for process in self.ps:
+                process.join()
+                if process.exitcode not in (0, None):
+                    raise RuntimeError(
+                        f"nano-vLLM worker exited with status {process.exitcode}"
+                    )
+            self.ps.clear()
+            self.events.clear()
+            self.scheduler = None
+            self.tokenizer = None
+            torch.cuda.synchronize()
+            self._closed = True
+            callback = self._atexit_callback
+            if callback is not None:
+                atexit.unregister(callback)
+                self._atexit_callback = None
 
     def add_request(self, prompt: str | list[int], sampling_params: SamplingParams, unconditional_prompt: str | list[int] | None = None):
         if isinstance(prompt, str):
@@ -127,6 +169,8 @@ class LLMEngine:
         # This is the primary defense against the intermittent CUDA device-side
         # assertion error that occurs in concurrent serving scenarios.
         with self._generate_lock:
+            if self._closed:
+                raise RuntimeError("nano-vLLM engine is closed; construct a new engine")
             return self._generate_impl(prompts, sampling_params, use_tqdm, unconditional_prompts)
 
     def _generate_impl(
