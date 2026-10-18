@@ -9,6 +9,9 @@ from loguru import logger
 from acestep.gpu_config import get_gpu_memory_gb
 
 
+from .memory_probes import call as profile_call
+
+
 class VaeEncodeMixin:
     """High-level VAE encode entrypoints and runtime chunk policy."""
 
@@ -62,7 +65,7 @@ class VaeEncodeMixin:
         if samples <= chunk_size:
             vae_input = audio.to(self.device).to(self.vae.dtype)
             with torch.inference_mode():
-                latents = self.vae.encode(vae_input).latent_dist.sample()
+                latents = profile_call(self, "vae_encode_tile", self.vae.encode, vae_input).latent_dist.sample()
             if input_was_2d:
                 latents = latents.squeeze(0)
             return latents

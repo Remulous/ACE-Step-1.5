@@ -22,6 +22,7 @@ import torch
 
 from acestep.audio_utils import AudioSaver, apply_fade, generate_uuid_from_params, normalize_audio, get_lora_weights_hash
 from acestep.constants import BPM_MIN, BPM_MAX, DURATION_MAX, TASK_TYPES, VALID_TIME_SIGNATURES
+from acestep.core.generation.handler.residency_request import guarded
 
 # HuggingFace Space environment detection
 IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
@@ -511,6 +512,7 @@ def _load_cached_repaint_source_latents(src_audio: Optional[str]) -> Optional[to
 
 
 @_get_spaces_gpu_decorator(duration=180)
+@guarded
 def generate_music(
     dit_handler,
     llm_handler,

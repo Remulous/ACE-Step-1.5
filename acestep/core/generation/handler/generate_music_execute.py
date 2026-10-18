@@ -6,15 +6,21 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from loguru import logger
 
+from .residency_request import worker_target
+
 # Maximum wall-clock seconds to wait for service_generate before declaring a hang.
 # Generous default: most generations finish in 30-120s, but large batches on slow
 # GPUs can take several minutes.  Override via ACESTEP_GENERATION_TIMEOUT env var.
 _DEFAULT_GENERATION_TIMEOUT = int(os.environ.get("ACESTEP_GENERATION_TIMEOUT", "600"))
 
 
+from .memory_telemetry import measured as profiled
+
+
 class GenerateMusicExecuteMixin:
     """Run service generation under diffusion progress estimation lifecycle."""
 
+    @profiled("worker_wait")
     def _run_generate_music_service_with_progress(
         self,
         progress: Any,
@@ -136,12 +142,24 @@ class GenerateMusicExecuteMixin:
                 desc=progress_desc,
             )
 
-            gen_thread = threading.Thread(
-                target=_service_target,
-                name="service-generate",
-                daemon=True,
-            )
-            gen_thread.start()
+            target, start_failed = worker_target(_service_target)
+            try:
+                gen_thread = threading.Thread(
+                    target=target,
+                    name="service-generate",
+                    daemon=True,
+                )
+            except BaseException:
+                start_failed()
+                raise
+            try:
+                gen_thread.start()
+            except Exception:
+                # An interrupted start may already have spawned its worker.
+                # Only a definite ordinary failure before startup releases it.
+                if gen_thread.ident is None:
+                    start_failed()
+                raise
             gen_thread.join(timeout=_DEFAULT_GENERATION_TIMEOUT)
 
             if gen_thread.is_alive():

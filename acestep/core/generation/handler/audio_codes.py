@@ -7,6 +7,8 @@ from typing import List, Optional
 import torch
 from loguru import logger
 
+from .residency_telemetry import measured
+
 
 class AudioCodesMixin:
     """Mixin containing audio-code parsing and latent conversion helpers.
@@ -44,6 +46,7 @@ class AudioCodesMixin:
             logger.debug(f"[_parse_audio_code_string] Failed to parse audio code string: {e}")
             return []
 
+    @measured("audio_codes")
     def _decode_audio_codes_to_latents(self, code_str: str) -> Optional[torch.Tensor]:
         """Convert serialized audio-code string into 25Hz latents."""
         if self.model is None or not hasattr(self.model, "tokenizer") or not hasattr(self.model, "detokenizer"):

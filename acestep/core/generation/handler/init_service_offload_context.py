@@ -5,6 +5,10 @@ from contextlib import contextmanager
 
 from loguru import logger
 
+from .dit_residency import manager
+from .residency_request import enabled, request_id, request_scope
+from .residency_telemetry import trace
+
 
 class InitServiceOffloadContextMixin:
     """Context-managed model load/offload behavior for CPU offload mode."""
@@ -12,6 +16,27 @@ class InitServiceOffloadContextMixin:
     @contextmanager
     def _load_model_context(self, model_name: str):
         """Load a model to device for the context and offload back to CPU on exit."""
+        if enabled(self):
+            with request_scope(self), manager(self).lock:
+                if model_name == "model":
+                    with manager(self).lease():
+                        yield
+                else:
+                    if model_name == "vae":
+                        manager(self).before_vae()
+                    trace(self, "component_start", request=request_id(), component=model_name)
+                    try:
+                        with self._legacy_load_model_context(model_name):
+                            yield
+                    finally:
+                        trace(self, "component_end", request=request_id(), component=model_name)
+            return
+        with self._legacy_load_model_context(model_name):
+            yield
+
+    @contextmanager
+    def _legacy_load_model_context(self, model_name: str):
+        """Preserve existing device behavior outside the opt-in CUDA experiment."""
         if not self.offload_to_cpu:
             yield
             return

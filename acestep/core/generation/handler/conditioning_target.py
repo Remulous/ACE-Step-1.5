@@ -1,9 +1,15 @@
 """Target-latent preparation helpers for handler batch conditioning."""
 
+from contextlib import nullcontext
 from typing import List, Optional, Tuple
 
 import torch
 from loguru import logger
+
+from .residency_request import enabled
+
+
+from .memory_telemetry import measured as profiled
 
 
 class ConditioningTargetMixin:
@@ -32,6 +38,7 @@ class ConditioningTargetMixin:
         tiled = self.silence_latent[0].repeat(repeats, 1)  # (repeats*available, C)
         return tiled[:length, :]
 
+    @profiled("target_prepare")
     def _prepare_target_latents_and_wavs(
         self,
         batch_size: int,
@@ -53,7 +60,9 @@ class ConditioningTargetMixin:
             if target_wavs.device != self.device:
                 target_wavs = target_wavs.to(self.device)
 
-            with self._load_model_context("vae"):
+            phase_policy = enabled(self)
+            vae_context = nullcontext() if phase_policy else self._load_model_context("vae")
+            with vae_context:
                 _cached_wav_ref: Optional[torch.Tensor] = None
                 _cached_latent: Optional[torch.Tensor] = None
 
@@ -102,7 +111,11 @@ class ConditioningTargetMixin:
                             target_latent = _cached_latent.clone()
                         else:
                             logger.info(f"[generate_music] Encoding target audio to latents for item {i}...")
-                            target_latent = self._encode_audio_to_latents(current_wav.squeeze(0))
+                            encode_context = (
+                                self._load_model_context("vae") if phase_policy else nullcontext()
+                            )
+                            with encode_context:
+                                target_latent = self._encode_audio_to_latents(current_wav.squeeze(0))
                             _cached_wav_ref = current_wav
                             _cached_latent = target_latent
                     target_latents_list.append(target_latent)

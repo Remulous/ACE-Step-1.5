@@ -7,6 +7,9 @@ from loguru import logger
 from tqdm import tqdm
 
 
+from .memory_probes import call as profile_call
+
+
 class VaeDecodeChunksMixin:
     """Implement chunked decode strategies for GPU and CPU-offload modes."""
 
@@ -43,7 +46,7 @@ class VaeDecodeChunksMixin:
 
         if latent_frames <= chunk_size:
             try:
-                decoder_output = self.vae.decode(latents)
+                decoder_output = profile_call(self, "vae_decode_tile", self.vae.decode, latents)
                 result = decoder_output.sample
                 del decoder_output
                 return result
@@ -96,7 +99,7 @@ class VaeDecodeChunksMixin:
             win_end = min(latents.shape[-1], core_end + overlap)
 
             latent_chunk = latents[:, :, win_start:win_end]
-            decoder_output = self.vae.decode(latent_chunk)
+            decoder_output = profile_call(self, "vae_decode_tile", self.vae.decode, latent_chunk)
             audio_chunk = decoder_output.sample
             del decoder_output
 
@@ -120,7 +123,7 @@ class VaeDecodeChunksMixin:
         first_core_end = min(stride, latent_frames)
         first_win_end = min(latent_frames, first_core_end + overlap)
         first_latent_chunk = latents[:, :, 0:first_win_end]
-        first_decoder_output = self.vae.decode(first_latent_chunk)
+        first_decoder_output = profile_call(self, "vae_decode_tile", self.vae.decode, first_latent_chunk)
         first_audio_chunk = first_decoder_output.sample
         del first_decoder_output
 
@@ -148,7 +151,7 @@ class VaeDecodeChunksMixin:
             win_end = min(latent_frames, core_end + overlap)
 
             latent_chunk = latents[:, :, win_start:win_end]
-            decoder_output = self.vae.decode(latent_chunk)
+            decoder_output = profile_call(self, "vae_decode_tile", self.vae.decode, latent_chunk)
             audio_chunk = decoder_output.sample
             del decoder_output
 

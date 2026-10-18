@@ -11,6 +11,9 @@ from acestep import gpu_config
 from .init_service_loader_components import InitServiceLoaderComponentsMixin
 
 
+from .memory_telemetry import milestone
+
+
 class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
     """Helpers for heavy model component loading."""
 
@@ -112,6 +115,7 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
         quantize_(self.model, quant_config, filter_fn=_dit_filter_fn)
         logger.info(f"[initialize_service] DiT quantized with: {quantization}")
 
+    @milestone("_load_main_model_from_checkpoint")
     def _load_main_model_from_checkpoint(
         self,
         *,

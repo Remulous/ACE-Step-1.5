@@ -4,6 +4,9 @@ import torch
 from tqdm import tqdm
 
 
+from .memory_probes import call as profile_call
+
+
 class VaeEncodeChunksMixin:
     """Implement chunked encode strategies for GPU and CPU-offload modes."""
 
@@ -21,7 +24,7 @@ class VaeEncodeChunksMixin:
 
             audio_chunk = audio[:, :, win_start:win_end].to(self.device).to(self.vae.dtype)
             with torch.inference_mode():
-                latent_chunk = self.vae.encode(audio_chunk).latent_dist.sample()
+                latent_chunk = profile_call(self, "vae_encode_tile", self.vae.encode, audio_chunk).latent_dist.sample()
 
             if downsample_factor is None:
                 downsample_factor = audio_chunk.shape[-1] / latent_chunk.shape[-1]
@@ -47,7 +50,7 @@ class VaeEncodeChunksMixin:
 
         first_audio_chunk = audio[:, :, 0:first_win_end].to(self.device).to(self.vae.dtype)
         with torch.inference_mode():
-            first_latent_chunk = self.vae.encode(first_audio_chunk).latent_dist.sample()
+            first_latent_chunk = profile_call(self, "vae_encode_tile", self.vae.encode, first_audio_chunk).latent_dist.sample()
 
         downsample_factor = first_audio_chunk.shape[-1] / first_latent_chunk.shape[-1]
         latent_channels = first_latent_chunk.shape[1]
@@ -79,7 +82,7 @@ class VaeEncodeChunksMixin:
 
             audio_chunk = audio[:, :, win_start:win_end].to(self.device).to(self.vae.dtype)
             with torch.inference_mode():
-                latent_chunk = self.vae.encode(audio_chunk).latent_dist.sample()
+                latent_chunk = profile_call(self, "vae_encode_tile", self.vae.encode, audio_chunk).latent_dist.sample()
 
             added_start = core_start - win_start
             trim_start = int(round(added_start / downsample_factor))

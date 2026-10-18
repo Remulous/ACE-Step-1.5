@@ -4,6 +4,8 @@ from typing import Dict, List, Optional, Union
 
 import torch
 
+from .residency_telemetry import measured
+
 from acestep.constants import DEFAULT_DIT_INSTRUCTION
 
 
@@ -60,6 +62,7 @@ class BatchPrepMixin:
         """Create default vocal-language values for missing inputs."""
         return ["en"] * batch_size
 
+    @measured("vae_source_encode")
     def _encode_audio_to_latents(self, audio: torch.Tensor) -> torch.Tensor:
         """Encode audio to latents using tiled VAE encode path."""
         input_was_2d = audio.dim() == 2

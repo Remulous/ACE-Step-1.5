@@ -6,6 +6,9 @@ from typing import Optional
 import torch
 
 
+from .memory_telemetry import milestone
+
+
 class InitServiceLoaderComponentsMixin:
     """Load VAE and text components used during service initialization.
 
@@ -16,6 +19,7 @@ class InitServiceLoaderComponentsMixin:
         ``self.text_tokenizer`` as side effects.
     """
 
+    @milestone("_load_vae_model")
     def _load_vae_model(
         self,
         *,
@@ -65,6 +69,7 @@ class InitServiceLoaderComponentsMixin:
 
         return vae_checkpoint_path
 
+    @milestone("_load_text_encoder_and_tokenizer")
     def _load_text_encoder_and_tokenizer(self, *, checkpoint_dir: str, device: str) -> str:
         """Load the text tokenizer and embedding model, then return its path.
 

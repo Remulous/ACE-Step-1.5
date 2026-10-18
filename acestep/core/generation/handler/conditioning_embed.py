@@ -5,6 +5,11 @@ from typing import Dict, List, Tuple
 import torch
 from loguru import logger
 
+from .residency_telemetry import measured
+
+
+from .memory_telemetry import measured as profiled
+
 
 class ConditioningEmbedMixin:
     """Mixin containing reference/text embedding preprocessing steps.
@@ -15,6 +20,7 @@ class ConditioningEmbedMixin:
       ``tiled_encode``.
     """
 
+    @measured("vae_reference_encode")
     def infer_refer_latent(self, refer_audioss: List[List[torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor]:
         """Infer packed reference-audio latents and order mask."""
         refer_audio_order_mask = []
@@ -78,6 +84,25 @@ class ConditioningEmbedMixin:
         with torch.inference_mode():
             return self.text_encoder.embed_tokens(lyric_token_ids)
 
+    @measured("text_encode")
+    def _infer_prompt_embeddings(self, text_ids, lyric_ids, non_cover_ids):
+        """Prepare all text embeddings in one independently offloaded encoder phase."""
+        # Early phase preparation receives CPU tokenizer outputs; the legacy
+        # preprocessing path already has device tensors, so these become no-ops.
+        text_ids = text_ids.to(self.device)
+        lyric_ids = lyric_ids.to(self.device)
+        if non_cover_ids is not None:
+            non_cover_ids = non_cover_ids.to(self.device)
+        logger.info("[preprocess_batch] Inferring prompt/lyric embeddings...")
+        with self._load_model_context("text_encoder"):
+            text_hidden_states = self.infer_text_embeddings(text_ids)
+            lyric_hidden_states = self.infer_lyric_embeddings(lyric_ids)
+            non_cover_hidden_states = None
+            if non_cover_ids is not None:
+                non_cover_hidden_states = self.infer_text_embeddings(non_cover_ids)
+        return text_hidden_states, lyric_hidden_states, non_cover_hidden_states
+
+    @profiled("batch_preprocess")
     def preprocess_batch(self, batch) -> Tuple:
         """Preprocess an already prepared batch for DiT model input."""
         target_latents = batch["target_latents"]
@@ -90,10 +115,11 @@ class ConditioningEmbedMixin:
         device = target_latents.device
 
         keys = batch["keys"]
-        with self._load_model_context("vae"):
-            refer_audio_acoustic_hidden_states_packed, refer_audio_order_mask = self.infer_refer_latent(
-                batch["refer_audioss"]
-            )
+        precomputed_reference = batch.get("precomputed_reference")
+        if precomputed_reference is None:
+            with self._load_model_context("vae"):
+                precomputed_reference = self.infer_refer_latent(batch["refer_audioss"])
+        refer_audio_acoustic_hidden_states_packed, refer_audio_order_mask = precomputed_reference
         if refer_audio_acoustic_hidden_states_packed.dtype != dtype:
             refer_audio_acoustic_hidden_states_packed = refer_audio_acoustic_hidden_states_packed.to(dtype)
 
@@ -107,20 +133,16 @@ class ConditioningEmbedMixin:
         lyric_attention_mask = batch["lyric_attention_masks"]
         text_inputs = batch["text_inputs"]
 
-        logger.info("[preprocess_batch] Inferring prompt embeddings...")
-        with self._load_model_context("text_encoder"):
-            text_hidden_states = self.infer_text_embeddings(text_token_idss)
-            logger.info("[preprocess_batch] Inferring lyric embeddings...")
-            lyric_hidden_states = self.infer_lyric_embeddings(lyric_token_idss)
-
-            is_covers = batch["is_covers"]
-            precomputed_lm_hints_25hz = batch.get("precomputed_lm_hints_25Hz", None)
-            non_cover_text_input_ids = batch.get("non_cover_text_input_ids", None)
-            non_cover_text_attention_masks = batch.get("non_cover_text_attention_masks", None)
-            non_cover_text_hidden_states = None
-            if non_cover_text_input_ids is not None:
-                logger.info("[preprocess_batch] Inferring non-cover text embeddings...")
-                non_cover_text_hidden_states = self.infer_text_embeddings(non_cover_text_input_ids)
+        is_covers = batch["is_covers"]
+        precomputed_lm_hints_25hz = batch.get("precomputed_lm_hints_25Hz", None)
+        non_cover_text_input_ids = batch.get("non_cover_text_input_ids", None)
+        non_cover_text_attention_masks = batch.get("non_cover_text_attention_masks", None)
+        embeddings = batch.get("precomputed_embeddings")
+        if embeddings is None:
+            embeddings = self._infer_prompt_embeddings(
+                text_token_idss, lyric_token_idss, non_cover_text_input_ids
+            )
+        text_hidden_states, lyric_hidden_states, non_cover_text_hidden_states = embeddings
 
         repaint_mask = batch.get("repaint_mask", None)
 

@@ -1,0 +1,15 @@
+# ACE-Step 1.5 optional low-memory profile (Profile D).
+# Requires an image built with phase residency and nano-vLLM KV cap support.
+# The production 0.1.8 image currently lacks those two features; see docs.
+services:
+  acestep:
+    environment:
+      ACESTEP_CONFIG_PATH: acestep-v15-xl-turbo
+      ACESTEP_LM_MODEL_PATH: acestep-5Hz-lm-4B
+      ACESTEP_LLM_BACKEND: vllm
+      ACESTEP_USE_FLASH_ATTENTION: "true"
+      ACESTEP_OFFLOAD_TO_CPU: "true"
+      ACESTEP_OFFLOAD_DIT_TO_CPU: "true"
+      ACESTEP_EXTRA_ARGS: --batch_size 1 --offload_to_cpu true --offload_dit_to_cpu true
+      ACESTEP_DIT_RESIDENCY: phase
+      ACESTEP_NANOVLLM_MAX_KV_BLOCKS: "32"

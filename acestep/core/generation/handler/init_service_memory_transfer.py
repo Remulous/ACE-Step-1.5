@@ -4,6 +4,9 @@ import torch
 from loguru import logger
 
 
+from .memory_probes import transfer as profile_transfer
+
+
 class InitServiceMemoryTransferMixin:
     """Helpers that move modules/parameters across devices and dtypes."""
 
@@ -66,6 +69,7 @@ class InitServiceMemoryTransferMixin:
         moved = param.to(target_device)
         return torch.nn.Parameter(moved, requires_grad=param.requires_grad)
 
+    @profile_transfer
     def _recursive_to_device(self, model, device, dtype=None):
         """Recursively move parameters and buffers to the specified device.
 
